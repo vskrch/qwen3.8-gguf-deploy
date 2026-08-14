@@ -12,7 +12,7 @@ ExecStart=/opt/qwen-server/bin/llama-server \
     --mmproj /opt/qwen-server/models/mmproj-F16.gguf \
     --host 0.0.0.0 \
     --port 8000 \
-    -c 262144 \
+    -c 65536 \
     -t 6 \
     -tb 6 \
     --parallel 1 \
@@ -22,8 +22,8 @@ ExecStart=/opt/qwen-server/bin/llama-server \
     --alias Qwen3.8-27B,qwen3.8-27b,qwen
 
 # Resource & Memory Boundaries (cgroups v2)
-MemoryHigh=33G
-MemoryMax=36G
+MemoryHigh=28G
+MemoryMax=32G
 CPUQuota=550%
 Nice=5
 CPUSchedulingPolicy=other

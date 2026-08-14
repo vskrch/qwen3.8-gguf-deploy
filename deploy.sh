@@ -2,12 +2,12 @@
 # ==============================================================================
 # 🚀 1-Click Autonomous Installer for Qwen3.8-27B-GGUF (llama-server)
 # Features:
-#   • Max Context Allowed: 262,144 Tokens (262k Full Native Architecture Limit)
+#   • Safe Max Context: 65,536 Tokens (65k Default - Zero System Overload)
 #   • Unsloth Dynamic V3.0 Quantization (UD-Q4_K_XL) + Multimodal Vision
 #   • Turbo 4-Bit KV Cache Quantization (-ctk q4_0 -ctv q4_0)
 #   • 32 GB SSD Swap Expansion for 82.5 GB Virtual Memory Headroom
 #   • Flash Attention & CPU AVX2 Multi-Thread Vector Acceleration
-#   • cgroups v2 Memory Bounds (33G High / 36G Max)
+#   • cgroups v2 Memory Bounds (28G High / 32G Max)
 #   • CPU Quota (550%) & Starvation Guard (Protects host & other containers)
 #   • Safe Disk Swap & Memory Reclaimer (Auto-flushes swap/cache when freed)
 #   • Fully OpenAI-Compatible Endpoints on Port 8000 (http://<IP>:8000/v1)
@@ -37,7 +37,7 @@ BIN_DIR="${INSTALL_DIR}/bin"
 LOGS_DIR="${INSTALL_DIR}/logs"
 PORT=8000
 THREADS=$(nproc || echo 6)
-CTX_SIZE=262144 # 262k Full Native Max Context
+CTX_SIZE=65536 # 65k Optimal Safe Default
 
 MODEL_NAME="Qwen3.8-27B-UD-Q4_K_XL.gguf"
 MODEL_URL="https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/main/${MODEL_NAME}"
@@ -47,7 +47,7 @@ LLAMA_TAR_URL="https://github.com/ggml-org/llama.cpp/releases/download/b10431/ll
 
 echo -e "${GREEN}"
 echo "=================================================================="
-echo "    Qwen3.8-27B-GGUF OpenAI Server (Max 262k Context & Self-Heal) "
+echo "    Qwen3.8-27B-GGUF OpenAI Server (65k Safe Context & Sentinel)  "
 echo "=================================================================="
 echo -e "${NC}"
 
@@ -117,7 +117,7 @@ else
     log_success "Projector file ${MMPROJ_NAME} is already present."
 fi
 
-# 7. Hardened Systemd Service (Max 262k Context)
+# 7. Hardened Systemd Service (65k Safe Context)
 log_info "[7/9] Configuring hardened systemd service (qwen-server.service)..."
 cat <<EOF > /etc/systemd/system/qwen-server.service
 [Unit]
@@ -144,8 +144,8 @@ ExecStart=${BIN_DIR}/llama-server \\
     --alias Qwen3.8-27B,qwen3.8-27b,qwen
 
 # Resource & Memory Boundaries (cgroups v2)
-MemoryHigh=33G
-MemoryMax=36G
+MemoryHigh=28G
+MemoryMax=32G
 CPUQuota=550%
 Nice=5
 CPUSchedulingPolicy=other
@@ -208,7 +208,7 @@ while true; do
     else
         CONSECUTIVE_FAILURES=$((CONSECUTIVE_FAILURES + 1))
         if [ "${CONSECUTIVE_FAILURES}" -ge "${MAX_FAILURES}" ]; then
-            log "🚨 Server unresponsive. Triggering restart and cache clearing..."
+            log "🚨 Server unresponsive. Restarting and clearing caches..."
             systemctl restart "${SERVICE_NAME}"
             CONSECUTIVE_FAILURES=0
             sync && echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true
@@ -257,10 +257,10 @@ for i in {1..30}; do
 done
 
 echo ""
-log_success "🎉 Qwen3.8-27B-GGUF Deployment Complete (Max 262k Context)!"
+log_success "🎉 Qwen3.8-27B-GGUF Deployment Complete (65k Safe Context)!"
 echo "------------------------------------------------------------------"
 echo " • OpenAI Base URL:    http://$(curl -s ifconfig.me || hostname -I | awk '{print $1}'):${PORT}/v1"
-echo " • Max Context Size:   262,144 tokens (262k)"
+echo " • Context Window:     65,536 tokens (65k Safe Default)"
 echo " • Models Endpoint:    http://localhost:${PORT}/v1/models"
 echo " • Chat Completions:   http://localhost:${PORT}/v1/chat/completions"
 echo " • Web UI:             http://localhost:${PORT}/"

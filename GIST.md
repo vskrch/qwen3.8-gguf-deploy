@@ -1,6 +1,6 @@
-# ⚡ 1-Click Runbook: Deploy Qwen3.8-27B-GGUF with 262k Context, Memory Guards & Safe Disk Reclaimer
+# ⚡ 1-Click Runbook: Deploy Qwen3.8-27B-GGUF with 65k Safe Context, Memory Guards & Safe Disk Reclaimer
 
-A standalone 1-click deployment guide for serving [`unsloth/Qwen3.8-27B-GGUF`](https://huggingface.co/unsloth/Qwen3.8-27B-GGUF) on Linux with **262k Max Context**, **Unsloth Dynamic V3.0**, **4-bit Turbo KV Cache**, **cgroups v2 boundaries**, and **Sentinel Safe Disk Reclaimer**.
+A standalone 1-click deployment guide for serving [`unsloth/Qwen3.8-27B-GGUF`](https://huggingface.co/unsloth/Qwen3.8-27B-GGUF) on Linux with **65k Safe Default Context**, **Unsloth Dynamic V3.0**, **4-bit Turbo KV Cache**, **cgroups v2 boundaries**, and **Sentinel Safe Disk Reclaimer**.
 
 ---
 
@@ -73,7 +73,7 @@ ExecStart=/opt/qwen-server/bin/llama-server \
     --mmproj /opt/qwen-server/models/mmproj-F16.gguf \
     --host 0.0.0.0 \
     --port 8000 \
-    -c 262144 \
+    -c 65536 \
     -t 6 \
     -tb 6 \
     --parallel 1 \
@@ -82,8 +82,8 @@ ExecStart=/opt/qwen-server/bin/llama-server \
     --flash-attn on \
     --alias Qwen3.8-27B,qwen3.8-27b,qwen
 
-MemoryHigh=33G
-MemoryMax=36G
+MemoryHigh=28G
+MemoryMax=32G
 CPUQuota=550%
 Nice=5
 CPUSchedulingPolicy=other
@@ -179,7 +179,7 @@ fi
 systemctl daemon-reload
 systemctl enable --now qwen-server
 systemctl enable --now qwen-sentinel
-echo "✅ Qwen3.8-27B with 262k Max Context & Safe Disk Reclaimer is active on port 8000!"
+echo "✅ Qwen3.8-27B with 65k Safe Context & Safe Disk Reclaimer is active on port 8000!"
 EOF
 )"
 ```

@@ -1,6 +1,6 @@
 # Qwen3.8-27B-GGUF Deployment & OpenAI Compatible Serving
 
-Complete guide and 1-click installer for deploying, configuring, serving, and troubleshooting **Qwen3.8-27B-GGUF** ([`unsloth/Qwen3.8-27B-GGUF`](https://huggingface.co/unsloth/Qwen3.8-27B-GGUF)) with **Full 262k Max Context**, **Unsloth Dynamic V3.0 quantization**, **Turbo 4-bit KV Cache**, **SSD Virtual Memory Headroom (82.5 GB)**, **cgroups v2 memory bounds**, and **automated self-healing & safe disk reclaimer watchdogs**.
+Complete guide and 1-click installer for deploying, configuring, serving, and troubleshooting **Qwen3.8-27B-GGUF** ([`unsloth/Qwen3.8-27B-GGUF`](https://huggingface.co/unsloth/Qwen3.8-27B-GGUF)) with **65,536 (65k) Safe Default Context**, **Unsloth Dynamic V3.0 quantization**, **Turbo 4-bit KV Cache**, **cgroups v2 memory bounds (28G/32G)**, and **automated self-healing watchdogs**.
 
 ---
 
@@ -24,16 +24,16 @@ sudo bash deploy.sh
 
 ## 1. Architecture & Features
 
-- **Context Window**: **262,144 Tokens (Full 262k Native Maximum)**
+- **Context Window**: **65,536 Tokens (65k Safe Default — Leaves ~15 GB RAM untouched)**
 - **Model Weights**: `Qwen3.8-27B-UD-Q4_K_XL.gguf` (~16.69 GB) + `mmproj-F16.gguf` (0.86 GB)
 - **Quantization**: Unsloth Dynamic V3.0 (Importance-matrix mixed precision)
 - **Turbo Optimizations**:
   - **Flash Attention**: `--flash-attn on` (In-cache tiled attention)
-  - **Turbo KV Cache**: `-ctk q4_0 -ctv q4_0` (Cuts KV cache RAM by 75%, allows 262k context within available memory)
+  - **Turbo KV Cache**: `-ctk q4_0 -ctv q4_0` (Cuts KV cache RAM by 75%)
   - **CPU AVX2 SIMD**: `-t 6 -tb 6 --parallel 1` (Direct multi-core vector processing)
   - **Virtual Memory Pool**: 39 GB RAM + 32 GB SSD Swap (82.5 GB total virtual memory headroom)
 - **Safeguards & Self-Healing**:
-  - **cgroups v2 RAM Caps**: `MemoryHigh=33G`, `MemoryMax=36G` (Prevents system OOM)
+  - **cgroups v2 RAM Caps**: `MemoryHigh=28G`, `MemoryMax=32G` (Prevents system OOM)
   - **CPU Starvation Protection**: `CPUQuota=550%`, `Nice=5` (Guarantees CPU headroom for OS and other containers)
   - **OOM Score Adjustment**: `OOMScoreAdjust=500` (Protects other server workloads)
   - **Active Watchdog & Safe Disk Reclaimer (`qwen-sentinel.service`)**: Automated deadlock detection, memory pressure cache-drop, and automated disk swap flushing when memory is freed.
