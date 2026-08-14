@@ -1,0 +1,14 @@
+[Unit]
+Description=Qwen Server Self-Healing Watchdog & Memory Sentinel
+After=qwen-server.service
+Wants=qwen-server.service
+
+[Service]
+Type=simple
+User=root
+ExecStart=/opt/qwen-server/bin/qwen-sentinel.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

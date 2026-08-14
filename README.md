@@ -1,15 +1,23 @@
 # Qwen3.8-27B-GGUF Deployment & OpenAI Compatible Serving
 
-Complete guide and reference for deploying, configuring, serving, and troubleshooting **Qwen3.8-27B-GGUF** ([`unsloth/Qwen3.8-27B-GGUF`](https://huggingface.co/unsloth/Qwen3.8-27B-GGUF)) with fully OpenAI-compatible REST API endpoints.
+Complete guide and reference for deploying, configuring, serving, and troubleshooting **Qwen3.8-27B-GGUF** ([`unsloth/Qwen3.8-27B-GGUF`](https://huggingface.co/unsloth/Qwen3.8-27B-GGUF)) with **Unsloth Dynamic V3.0 quantization**, **Turbo 8-bit KV Cache**, **cgroups v2 memory bounds**, and **automated self-healing watchdogs**.
 
 ---
 
 ## 1. Overview & Architecture
 
 - **Model**: `Qwen3.8-27B-UD-Q4_K_XL.gguf` (~16.69 GB) + `mmproj-F16.gguf` (0.86 GB)
-- **Serving Engine**: `llama-server` (llama.cpp build 10431 with AVX2 optimizations)
+- **Quantization**: Unsloth Dynamic V3.0 (Per-tensor importance-weighted quantization)
+- **Turbo Optimizations**:
+  - **Flash Attention**: `--flash-attn on`
+  - **Turbo KV Cache**: `-ctk q8_0 -ctv q8_0` (Halves KV cache RAM, accelerates attention)
+  - **CPU AVX2 SIMD**: `-t 6 -tb 6 --parallel 1`
+- **Safeguards & Self-Healing**:
+  - **cgroups v2 RAM Caps**: `MemoryHigh=28G`, `MemoryMax=32G` (Prevents system OOM)
+  - **CPU Starvation Protection**: `CPUQuota=550%`, `Nice=5` (Reserves CPU for host/Potato server)
+  - **OOM Score Adjustment**: `OOMScoreAdjust=500` (Protects Potato Docker container)
+  - **Active Watchdog (`qwen-sentinel.service`)**: Automated deadlock detection, memory pressure cache-drop, and auto-restart on crash/hang.
 - **Base Endpoint**: `http://<SERVER_IP>:8000/v1`
-- **Isolation**: Stored under `/opt/qwen-server` and managed via `qwen-server.service` (no conflict with `/opt/potato` on port 8080).
 
 ---
 
@@ -19,6 +27,7 @@ Complete guide and reference for deploying, configuring, serving, and troublesho
 /opt/qwen-server/
 ├── bin/
 │   ├── llama-server
+│   ├── qwen-sentinel.sh
 │   └── lib*.so (shared libraries)
 ├── models/
 │   ├── Qwen3.8-27B-UD-Q4_K_XL.gguf
@@ -36,70 +45,23 @@ Run the included `deploy.sh` as root:
 sudo bash deploy.sh
 ```
 
-### Manual Step-by-Step Installation
-
-1. **Install Prerequisites**:
-   ```bash
-   sudo apt-get update && sudo apt-get install -y aria2 curl tar
-   sudo mkdir -p /opt/qwen-server/{bin,models,logs}
-   ```
-
-2. **Download llama.cpp Server**:
-   ```bash
-   curl -L -s https://github.com/ggml-org/llama.cpp/releases/download/b10431/llama-b10431-bin-ubuntu-x64.tar.gz -o /tmp/llama.tar.gz
-   tar -xzf /tmp/llama.tar.gz -C /tmp/
-   sudo cp -r /tmp/llama-b10431/* /opt/qwen-server/bin/
-   sudo chmod +x /opt/qwen-server/bin/llama-server
-   rm -rf /tmp/llama*
-   ```
-
-3. **Download Model Weights (Accelerated 16-thread download)**:
-   ```bash
-   sudo aria2c -x 16 -s 16 -k 1M --file-allocation=none \
-       --dir="/opt/qwen-server/models" --out="Qwen3.8-27B-UD-Q4_K_XL.gguf" \
-       "https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/main/Qwen3.8-27B-UD-Q4_K_XL.gguf"
-
-   sudo aria2c -x 16 -s 16 -k 1M --file-allocation=none \
-       --dir="/opt/qwen-server/models" --out="mmproj-F16.gguf" \
-       "https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/main/mmproj-F16.gguf"
-   ```
-
-4. **Install Systemd Service**:
-   ```bash
-   sudo cp qwen-server.service /etc/systemd/system/
-   sudo systemctl daemon-reload
-   sudo systemctl enable --now qwen-server
-   ```
-
 ---
 
 ## 4. Service Management
 
 | Action | Command |
 | :--- | :--- |
-| **Check Status** | `sudo systemctl status qwen-server` |
+| **Check Server Status** | `sudo systemctl status qwen-server` |
+| **Check Sentinel Status** | `sudo systemctl status qwen-sentinel` |
 | **View Live Logs** | `sudo journalctl -u qwen-server -f` |
-| **Restart Service** | `sudo systemctl restart qwen-server` |
-| **Stop Service** | `sudo systemctl stop qwen-server` |
-| **Start Service** | `sudo systemctl start qwen-server` |
+| **Restart Server** | `sudo systemctl restart qwen-server` |
+| **Restart Sentinel** | `sudo systemctl restart qwen-sentinel` |
 
 ---
 
-## 5. Configuration & Tuning
+## 5. Using the OpenAI-Compatible API
 
-Edit `/etc/systemd/system/qwen-server.service` and reload (`sudo systemctl daemon-reload && sudo systemctl restart qwen-server`):
-
-- **Threads (`-t`)**: Set to number of physical CPU cores (e.g. `-t 6`).
-- **Context Window (`-c`)**: Default is `-c 8192`. Increase to `16384` or `32768` if needed for long documents.
-- **Port (`--port`)**: Default is `8000`. Change if needed.
-- **Batch Size (`-b` / `-ub`)**: E.g. `-b 512 -ub 512` for CPU prompt processing throughput.
-- **Flash Attention (`--flash-attn`)**: Enabled by default for lower memory usage and faster attention.
-
----
-
-## 6. Using the OpenAI-Compatible API
-
-### 6.1 cURL Example
+### 5.1 cURL Example
 
 ```bash
 curl http://10.0.0.73:8000/v1/chat/completions \
@@ -108,14 +70,14 @@ curl http://10.0.0.73:8000/v1/chat/completions \
     "model": "Qwen3.8-27B",
     "messages": [
       {"role": "system", "content": "You are a helpful assistant."},
-      {"role": "user", "content": "Hello! What is your name?"}
+      {"role": "user", "content": "What is 2 + 2? Give just the number."}
     ],
     "temperature": 0.7,
-    "max_tokens": 200
+    "max_tokens": 80
   }'
 ```
 
-### 6.2 Python (OpenAI SDK)
+### 5.2 Python (Official OpenAI SDK)
 
 ```python
 from openai import OpenAI
@@ -125,58 +87,49 @@ client = OpenAI(
     api_key="not-needed"
 )
 
+# Standard call with reasoning/thinking support
 response = client.chat.completions.create(
     model="Qwen3.8-27B",
     messages=[
-        {"role": "user", "content": "Write a quick Python function to calculate fibonacci numbers."}
+        {"role": "user", "content": "Explain CPU vectorization briefly."}
     ],
-    temperature=0.7,
-    max_tokens=256
+    max_tokens=150
 )
 
-print(response.choices[0].message.content)
-```
+# Qwen3.8 outputs both reasoning (thinking) and final answer
+msg = response.choices[0].message
+if hasattr(msg, "reasoning_content") and msg.reasoning_content:
+    print(f"💭 Thinking:\n{msg.reasoning_content}\n")
+print(f"🤖 Answer:\n{msg.content}")
 
-### 6.3 Streaming Support
-
-```python
-from openai import OpenAI
-
-client = OpenAI(
-    base_url="http://10.0.0.73:8000/v1",
-    api_key="not-needed"
-)
-
+# Streaming example
 stream = client.chat.completions.create(
     model="Qwen3.8-27B",
-    messages=[{"role": "user", "content": "Tell me a short sci-fi story."}],
+    messages=[{"role": "user", "content": "Write a short haiku."}],
     stream=True
 )
 
 for chunk in stream:
-    if chunk.choices[0].delta.content is not None:
-        print(chunk.choices[0].delta.content, end="", flush=True)
+    delta = chunk.choices[0].delta
+    if hasattr(delta, "reasoning_content") and delta.reasoning_content:
+        print(delta.reasoning_content, end="", flush=True)
+    if delta.content:
+        print(delta.content, end="", flush=True)
 ```
 
 ---
 
-## 7. Troubleshooting Guide
+## 6. Self-Healing & Safeguards Reference
 
-### Issue 1: Port Conflict / Connection Refused
-- **Symptom**: `curl: (7) Failed to connect to 10.0.0.73 port 8000: Connection refused`
-- **Fix**: Check `sudo journalctl -u qwen-server -n 50`. If port 8000 is taken, change `--port <NEW_PORT>` in `/etc/systemd/system/qwen-server.service` and restart.
+### Automatic Crash Recovery
+`qwen-server.service` uses `Restart=always` with `RestartSec=3`. If the process crashes or gets killed, systemd automatically restores the service in under 3 seconds.
 
-### Issue 2: Out of Memory (OOM) or Process Killed
-- **Symptom**: Systemd logs show `status=137/KILL` or `SIGKILL`.
-- **Fix**: Reduce context window `-c 4096` or `-c 8192` in `/etc/systemd/system/qwen-server.service`.
+### Memory & CPU Bounds
+- If memory exceeds `28GB`, Linux begins throttling memory allocation.
+- If memory attempts to exceed `32GB`, cgroups caps the process without affecting the host or `/opt/potato`.
+- `CPUQuota=550%` guarantees at least 50% of one core is always reserved for the host OS and other services.
 
-### Issue 3: Slow Generation on CPU
-- **Symptom**: High latency per token.
-- **Fix**:
-  1. Ensure `--flash-attn` is enabled.
-  2. Match `-t` to the physical CPU core count (e.g. `-t 6`).
-  3. Ensure no other heavy background CPU tasks are pinning all cores.
-
-### Issue 4: Dynamic Shared Library Issues
-- **Symptom**: `error while loading shared libraries: libllama.so...`
-- **Fix**: Ensure `Environment="LD_LIBRARY_PATH=/opt/qwen-server/bin"` is defined in the systemd service file.
+### Active Sentinel Watchdog
+`qwen-sentinel.service` runs every 20 seconds:
+1. Pings the health endpoint. If unresponsive for 3 consecutive checks (60s), it issues a restart.
+2. Monitors available system RAM. If free memory dips below `3.5GB`, it automatically flushes OS page caches.

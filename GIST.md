@@ -1,6 +1,6 @@
-# Deploying Qwen3.8-27B-GGUF with OpenAI-Compatible Endpoints via llama-server
+# Deploying Qwen3.8-27B-GGUF with Self-Healing, Memory Guards & Turbo Optimizations
 
-A complete, standalone runbook and guide for serving [`unsloth/Qwen3.8-27B-GGUF`](https://huggingface.co/unsloth/Qwen3.8-27B-GGUF) on Linux systems using AVX2-optimized `llama-server`.
+A complete, standalone runbook for serving [`unsloth/Qwen3.8-27B-GGUF`](https://huggingface.co/unsloth/Qwen3.8-27B-GGUF) on Linux with **Unsloth Dynamic V3.0**, **8-bit Turbo KV Cache**, **cgroups v2 boundaries**, and **Sentinel Watchdog**.
 
 ---
 
@@ -12,6 +12,14 @@ set -euo pipefail
 
 INSTALL_DIR="/opt/qwen-server"
 mkdir -p "${INSTALL_DIR}/bin" "${INSTALL_DIR}/models" "${INSTALL_DIR}/logs"
+
+cat << 'SYSCTL' > /etc/sysctl.d/99-qwen-tuning.conf
+vm.swappiness=10
+vm.vfs_cache_pressure=50
+vm.dirty_ratio=10
+vm.dirty_background_ratio=5
+SYSCTL
+sysctl -p /etc/sysctl.d/99-qwen-tuning.conf || true
 
 apt-get update -qq && apt-get install -y -qq aria2 curl tar
 
@@ -49,15 +57,91 @@ ExecStart=/opt/qwen-server/bin/llama-server \
     -t 6 \
     -tb 6 \
     --parallel 1 \
-    --alias Qwen3.8-27B,qwen3.8-27b,qwen \
-    --flash-attn on
+    -ctk q8_0 \
+    -ctv q8_0 \
+    --flash-attn on \
+    --alias Qwen3.8-27B,qwen3.8-27b,qwen
+
+MemoryHigh=28G
+MemoryMax=32G
+CPUQuota=550%
+Nice=5
+CPUSchedulingPolicy=other
+OOMScoreAdjust=500
+
 Restart=always
-RestartSec=5
+RestartSec=3
+StartLimitIntervalSec=300
+StartLimitBurst=5
 LimitNOFILE=65535
 
 [Install]
 WantedBy=multi-user.target
 SERVICE
+
+cat << 'SENTINEL' > "${INSTALL_DIR}/bin/qwen-sentinel.sh"
+#!/usr/bin/env bash
+set -u
+ENDPOINT="http://127.0.0.1:8000/v1/models"
+HEALTH_ENDPOINT="http://127.0.0.1:8000/health"
+SERVICE_NAME="qwen-server"
+CHECK_INTERVAL=20
+CONSECUTIVE_FAILURES=0
+MAX_FAILURES=3
+MIN_AVAILABLE_RAM_KB=3670016
+
+log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [QWEN-SENTINEL] $1"; }
+
+while true; do
+    if [ -f /proc/meminfo ]; then
+        MEM_AVAIL=$(awk '/MemAvailable/ {print $2}' /proc/meminfo)
+        if [ -n "${MEM_AVAIL}" ] && [ "${MEM_AVAIL}" -lt "${MIN_AVAILABLE_RAM_KB}" ]; then
+            log "⚠️ Memory pressure detected! Available RAM: $((MEM_AVAIL / 1024)) MB"
+            sync && echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true
+        fi
+    fi
+
+    if ! systemctl is-active --quiet "${SERVICE_NAME}"; then
+        systemctl start "${SERVICE_NAME}"
+        sleep "${CHECK_INTERVAL}"
+        continue
+    fi
+
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "${HEALTH_ENDPOINT}" 2>/dev/null || \
+               curl -s -o /dev/null -w "%{http_code}" --max-time 10 "${ENDPOINT}" 2>/dev/null || echo "000")
+
+    if [ "${HTTP_CODE}" = "200" ] || [ "${HTTP_CODE}" = "503" ]; then
+        CONSECUTIVE_FAILURES=0
+    else
+        CONSECUTIVE_FAILURES=$((CONSECUTIVE_FAILURES + 1))
+        if [ "${CONSECUTIVE_FAILURES}" -ge "${MAX_FAILURES}" ]; then
+            log "🚨 Server unresponsive. Triggering restart..."
+            systemctl restart "${SERVICE_NAME}"
+            CONSECUTIVE_FAILURES=0
+            sleep 15
+        fi
+    fi
+    sleep "${CHECK_INTERVAL}"
+done
+SENTINEL
+chmod +x "${INSTALL_DIR}/bin/qwen-sentinel.sh"
+
+cat << 'SNTL_SVC' > /etc/systemd/system/qwen-sentinel.service
+[Unit]
+Description=Qwen Server Self-Healing Watchdog & Memory Sentinel
+After=qwen-server.service
+Wants=qwen-server.service
+
+[Service]
+Type=simple
+User=root
+ExecStart=/opt/qwen-server/bin/qwen-sentinel.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+SNTL_SVC
 
 if command -v ufw >/dev/null 2>&1; then
     ufw allow 8000/tcp comment 'Qwen LLM OpenAI API' || true
@@ -65,7 +149,8 @@ fi
 
 systemctl daemon-reload
 systemctl enable --now qwen-server
-echo "Qwen3.8-27B is now active at http://localhost:8000/v1"
+systemctl enable --now qwen-sentinel
+echo "✅ Qwen3.8-27B with Self-Healing Sentinel is active on port 8000!"
 EOF
 )"
 ```
@@ -75,84 +160,10 @@ EOF
 ## 🛠 Service Administration
 
 ```bash
-# Check service health and logs
+# Check server and watchdog health
 sudo systemctl status qwen-server
-sudo journalctl -u qwen-server -f
+sudo systemctl status qwen-sentinel
 
-# Restart / Stop / Start
-sudo systemctl restart qwen-server
-sudo systemctl stop qwen-server
-sudo systemctl start qwen-server
+# View live watchdog logs
+sudo journalctl -u qwen-sentinel -f
 ```
-
----
-
-## 📡 OpenAI API Usage Examples
-
-### 1. List Available Models
-```bash
-curl http://10.0.0.73:8000/v1/models
-```
-
-### 2. Chat Completion (cURL)
-```bash
-curl http://10.0.0.73:8000/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "Qwen3.8-27B",
-    "messages": [
-      {"role": "system", "content": "You are a helpful coding assistant."},
-      {"role": "user", "content": "Write a python snippet to compute factorial."}
-    ],
-    "temperature": 0.7,
-    "max_tokens": 150
-  }'
-```
-
-### 3. Python (Official OpenAI SDK)
-```python
-from openai import OpenAI
-
-client = OpenAI(
-    base_url="http://10.0.0.73:8000/v1",
-    api_key="none"
-)
-
-# Standard non-streaming
-response = client.chat.completions.create(
-    model="Qwen3.8-27B",
-    messages=[{"role": "user", "content": "Explain CPU quantization in simple terms."}],
-    max_tokens=200
-)
-
-# Access reasoning (thinking) and final answer
-msg = response.choices[0].message
-if hasattr(msg, "reasoning_content") and msg.reasoning_content:
-    print(f"Thinking:\n{msg.reasoning_content}\n")
-print(f"Answer:\n{msg.content}")
-
-# Streaming
-stream = client.chat.completions.create(
-    model="Qwen3.8-27B",
-    messages=[{"role": "user", "content": "Tell me a haiku about computers."}],
-    stream=True
-)
-
-for chunk in stream:
-    delta = chunk.choices[0].delta
-    if hasattr(delta, "reasoning_content") and delta.reasoning_content:
-        print(delta.reasoning_content, end="", flush=True)
-    if delta.content:
-        print(delta.content, end="", flush=True)
-```
-
----
-
-## 🔍 Troubleshooting Guide
-
-| Issue | Cause | Fix |
-| :--- | :--- | :--- |
-| **`Connection refused` on port 8000** | Firewall or server initializing | Check `sudo journalctl -u qwen-server -n 30` to verify load progress. Run `sudo ufw allow 8000/tcp`. |
-| **OOM / Process Killed** | Context window exceeds RAM headroom | Lower context `-c 4096` in `/etc/systemd/system/qwen-server.service` and restart. |
-| **High CPU latency** | Thread oversaturation or multiple concurrent slots | Set `-t <PHYSICAL_CORES>` (e.g. `-t 6`) and `--parallel 1` in service file. |
-| **Thinking block consuming max tokens** | Reasoning models generate chain-of-thought | Increase `max_tokens` (e.g. `max_tokens=256` or more) or set system prompt to be concise. |

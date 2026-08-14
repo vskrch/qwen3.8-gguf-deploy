@@ -16,10 +16,24 @@ ExecStart=/opt/qwen-server/bin/llama-server \
     -t 6 \
     -tb 6 \
     --parallel 1 \
-    --alias Qwen3.8-27B,qwen3.8-27b,qwen \
-    --flash-attn on
+    -ctk q8_0 \
+    -ctv q8_0 \
+    --flash-attn on \
+    --alias Qwen3.8-27B,qwen3.8-27b,qwen
+
+# Resource & Memory Boundaries (cgroups v2)
+MemoryHigh=28G
+MemoryMax=32G
+CPUQuota=550%
+Nice=5
+CPUSchedulingPolicy=other
+OOMScoreAdjust=500
+
+# Self-Healing & Failure Recovery
 Restart=always
-RestartSec=5
+RestartSec=3
+StartLimitIntervalSec=300
+StartLimitBurst=5
 LimitNOFILE=65535
 
 [Install]
