@@ -1,6 +1,6 @@
-# ⚡ 1-Click Runbook: Deploy Qwen3.8-27B-GGUF with 65k Safe Context, Memory Guards & Safe Disk Reclaimer
+# ⚡ 1-Click Runbook: Deploy Qwen3.8-27B-GGUF at Maximum Hardware Speed
 
-A standalone 1-click deployment guide for serving [`unsloth/Qwen3.8-27B-GGUF`](https://huggingface.co/unsloth/Qwen3.8-27B-GGUF) on Linux with **65k Safe Default Context**, **Unsloth Dynamic V3.0**, **4-bit Turbo KV Cache**, **cgroups v2 boundaries**, and **Sentinel Safe Disk Reclaimer**.
+A standalone 1-click deployment guide for serving [`unsloth/Qwen3.8-27B-GGUF`](https://huggingface.co/unsloth/Qwen3.8-27B-GGUF) on Linux with **Persistent 3.7 GHz CPU Governor**, **mmap+mlock RAM Pinning**, **65k Safe Context**, **Unsloth Dynamic V3.0**, **4-bit Turbo KV Cache**, **cgroups v2 boundaries**, and **Sentinel Safe Disk Reclaimer**.
 
 ---
 
@@ -30,6 +30,23 @@ vm.dirty_ratio=10
 vm.dirty_background_ratio=5
 SYSCTL
 sysctl -p /etc/sysctl.d/99-qwen-tuning.conf >/dev/null 2>&1 || true
+
+cat << 'CPU_SVC' > /etc/systemd/system/cpu-performance.service
+[Unit]
+Description=Set CPU Scaling Governor to Performance for Max Speed
+After=sysinit.target local-fs.target
+DefaultDependencies=no
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c "for g in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do echo performance > \$g 2>/dev/null || true; done"
+RemainAfterExit=yes
+
+[Install]
+WantedBy=sysinit.target
+CPU_SVC
+systemctl daemon-reload
+systemctl enable --now cpu-performance.service >/dev/null 2>&1 || true
 
 if [ ! -f /swapfile_qwen ]; then
     fallocate -l 32G /swapfile_qwen 2>/dev/null || dd if=/dev/zero of=/swapfile_qwen bs=1M count=32768
@@ -61,7 +78,8 @@ aria2c -x 16 -s 16 -k 1M --file-allocation=none \
 cat <<'SERVICE' > /etc/systemd/system/qwen-server.service
 [Unit]
 Description=Qwen3.8-27B-GGUF llama-server (OpenAI Compatible API)
-After=network.target
+After=network.target cpu-performance.service
+Wants=cpu-performance.service
 
 [Service]
 Type=simple
@@ -76,6 +94,9 @@ ExecStart=/opt/qwen-server/bin/llama-server \
     -c 65536 \
     -t 6 \
     -tb 6 \
+    -b 512 \
+    -ub 256 \
+    --load-mode mmap+mlock \
     --parallel 1 \
     -ctk q4_0 \
     -ctv q4_0 \
@@ -85,15 +106,16 @@ ExecStart=/opt/qwen-server/bin/llama-server \
 MemoryHigh=28G
 MemoryMax=32G
 CPUQuota=550%
-Nice=5
+Nice=-5
 CPUSchedulingPolicy=other
 OOMScoreAdjust=500
+LimitMEMLOCK=infinity
+LimitNOFILE=65535
 
 Restart=always
 RestartSec=3
 StartLimitIntervalSec=300
 StartLimitBurst=5
-LimitNOFILE=65535
 
 [Install]
 WantedBy=multi-user.target
@@ -179,25 +201,21 @@ fi
 systemctl daemon-reload
 systemctl enable --now qwen-server
 systemctl enable --now qwen-sentinel
-echo "✅ Qwen3.8-27B with 65k Safe Context & Safe Disk Reclaimer is active on port 8000!"
+echo "✅ Qwen3.8-27B running at maximum hardware speed on port 8000!"
 EOF
 )"
 ```
 
 ---
 
-## 📡 OpenAI API Verification
+## 📡 OpenAI API Streaming Verification
 
 ```bash
-# 1. Models
-curl http://localhost:8000/v1/models
-
-# 2. Chat Completion
-curl http://localhost:8000/v1/chat/completions \
+curl -N http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
     "model": "Qwen3.8-27B",
     "messages": [{"role": "user", "content": "What is 2+2?"}],
-    "max_tokens": 50
+    "stream": true
   }'
 ```

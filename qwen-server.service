@@ -1,6 +1,7 @@
 [Unit]
 Description=Qwen3.8-27B-GGUF llama-server (OpenAI Compatible API)
-After=network.target
+After=network.target cpu-performance.service
+Wants=cpu-performance.service
 
 [Service]
 Type=simple
@@ -15,6 +16,9 @@ ExecStart=/opt/qwen-server/bin/llama-server \
     -c 65536 \
     -t 6 \
     -tb 6 \
+    -b 512 \
+    -ub 256 \
+    --load-mode mmap+mlock \
     --parallel 1 \
     -ctk q4_0 \
     -ctv q4_0 \
@@ -25,16 +29,17 @@ ExecStart=/opt/qwen-server/bin/llama-server \
 MemoryHigh=28G
 MemoryMax=32G
 CPUQuota=550%
-Nice=5
+Nice=-5
 CPUSchedulingPolicy=other
 OOMScoreAdjust=500
+LimitMEMLOCK=infinity
+LimitNOFILE=65535
 
 # Self-Healing & Failure Recovery
 Restart=always
 RestartSec=3
 StartLimitIntervalSec=300
 StartLimitBurst=5
-LimitNOFILE=65535
 
 [Install]
 WantedBy=multi-user.target
