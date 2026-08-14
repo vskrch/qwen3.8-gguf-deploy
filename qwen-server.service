@@ -2,6 +2,8 @@
 Description=Qwen3.8-27B-GGUF llama-server (OpenAI Compatible API)
 After=network.target cpu-performance.service
 Wants=cpu-performance.service
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -39,8 +41,6 @@ LimitNOFILE=65535
 # Self-Healing & Failure Recovery
 Restart=always
 RestartSec=3
-StartLimitIntervalSec=300
-StartLimitBurst=5
 
 [Install]
 WantedBy=multi-user.target

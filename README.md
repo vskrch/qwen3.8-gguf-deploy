@@ -1,84 +1,66 @@
-# Qwen3.8-27B-GGUF Deployment & OpenAI Compatible Serving
+# 🚀 Qwen3.8-27B-GGUF Enterprise OpenAI Compatible Server
 
-Complete guide and 1-click installer for deploying, configuring, serving, and troubleshooting **Qwen3.8-27B-GGUF** ([`unsloth/Qwen3.8-27B-GGUF`](https://huggingface.co/unsloth/Qwen3.8-27B-GGUF)) with **Native Multi-Token Prediction (MTP) Speculative Decoding (2.22 tokens/sec)**, **Persistent 3.7 GHz CPU Governor**, **mmap+mlock RAM Pinning**, **Unsloth Dynamic V3.0 quantization**, **Turbo 4-bit KV Cache**, **cgroups v2 memory bounds**, and **automated self-healing watchdogs**.
+A commercial-grade, fully automated 1-click deployment suite for serving **Qwen3.8-27B-GGUF** ([`unsloth/Qwen3.8-27B-GGUF`](https://huggingface.co/unsloth/Qwen3.8-27B-GGUF)) on Linux with **Native Multi-Token Prediction (MTP) Speculative Decoding (~2.22 tokens/sec)**, **Persistent 3.7 GHz CPU Governor**, **mmap+mlock RAM Pinning**, **65k Safe Context**, **cgroups v2 boundaries**, **Self-Healing Watchdog**, **Universal Firewall Config**, and **Global `qwen-admin` CLI**.
 
 ---
 
-## ⚡ 1-Click Installation
+## ⚡ Commercial 1-Click Installer
 
-Run this single command on your Linux server:
+Execute this single command on your Linux server:
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/vskrch/qwen3.8-gguf-deploy/main/deploy.sh | sudo bash
 ```
 
-Or clone and run locally:
+Or clone and execute with custom options:
 
 ```bash
 git clone https://github.com/vskrch/qwen3.8-gguf-deploy.git
 cd qwen3.8-gguf-deploy
-sudo bash deploy.sh
+sudo bash deploy.sh -y --port 8000 --ctx 65536
 ```
 
 ---
 
-## 1. High-Speed Architecture & Performance Metrics
+## 🛠 Complete 11-Step Enterprise Installer Architecture
 
-- **Generation Speed**: **2.22 Tokens / Second** *(+115% faster via Native MTP Speculative Decoding!)*
-- **Draft Acceptance Rate**: **100% (1.0000)** *(26/26 draft tokens accepted)*
-- **Context Window**: **65,536 Tokens (65k Safe Default — Leaves ~15 GB RAM untouched)**
-- **Model Weights**: `Qwen3.8-27B-UD-Q4_K_XL.gguf` (~16.69 GB)
-- **Quantization**: Unsloth Dynamic V3.0 (Importance-matrix mixed precision)
-- **Engine Optimizations**:
-  - **Native MTP Speculative Decoding (`--spec-type draft-mtp --spec-draft-n-max 2`)**: Generates multi-token draft batches verified in a single forward pass, more than doubling CPU generation speed.
-  - **Persistent CPU Performance Governor**: `cpu-performance.service` locks all 6 CPU cores to max Turbo (3.7 GHz) permanently across reboots.
-  - **Memory Pinning (`--load-mode mmap+mlock`)**: Pins all model weights directly in physical RAM, completely preventing OS page faults or swapping.
-  - **L3-Cache Aligned Microbatching (`-b 512 -ub 256`)**: Optimizes prompt matrix multiplication tiles within CPU L3 cache.
-  - **Flash Attention**: `--flash-attn on` (In-cache tiled attention)
-  - **Turbo KV Cache**: `-ctk q4_0 -ctv q4_0` (Cuts KV cache RAM by 75%)
-  - **CPU AVX2 SIMD**: `-t 6 -tb 6 --parallel 1` (Direct multi-core vector processing)
-  - **High Process Scheduling Priority**: `Nice=-5`
-  - **Virtual Memory Pool**: 39 GB RAM + 32 GB SSD Swap (82.5 GB total virtual memory headroom)
-- **Safeguards & Self-Healing**:
-  - **cgroups v2 RAM Caps**: `MemoryHigh=28G`, `MemoryMax=32G` (Prevents system OOM)
-  - **CPU Starvation Protection**: `CPUQuota=550%` (Guarantees CPU headroom for OS and other containers)
-  - **OOM Score Adjustment**: `OOMScoreAdjust=500` (Protects other server workloads)
-  - **Active Watchdog & Safe Disk Reclaimer (`qwen-sentinel.service`)**: Automated deadlock detection, memory pressure cache-drop, and automated disk swap flushing when memory is freed.
-- **Base Endpoint**: `http://<SERVER_IP>:8000/v1`
+`deploy.sh` executes an 11-stage automated deployment pipeline:
+
+1. **Pre-flight & Hardware Integrity Checks**: Validates OS, x86_64 architecture, AVX2 vector SIMD flags, RAM capacity, root disk space, and port availability.
+2. **Enterprise Kernel & Virtual Memory Optimization**: Applies `vm.swappiness=10`, `vm.vfs_cache_pressure=50`, `vm.overcommit_memory=1`, and unlimited PAM `memlock` limits.
+3. **Persistent CPU Turbo Performance Governor**: Deploys `cpu-performance.service` to lock all CPU cores to maximum Turbo frequency (3.7 GHz+) across reboots.
+4. **SSD Virtual Memory Swap Pool**: Provisions a dedicated 32 GB SSD swapfile (`/swapfile_qwen`) for 82.5 GB total virtual memory pool.
+5. **Essential Enterprise Package Sync**: Installs and verifies `aria2`, `curl`, `wget`, `tar`, `gzip`, `jq`, and firewall tools.
+6. **Native AVX2 Engine Installation**: Deploys the latest optimized `llama-server` engine with custom library paths.
+7. **16-Stream Accelerated Model Downloader**: Multi-stream parallel downloading of `Qwen3.8-27B-UD-Q4_K_XL.gguf` with auto-resume and checksum verification.
+8. **Hardened Systemd Service with Native MTP Speculation**: Deploys `qwen-server.service` configured with:
+   - Native Multi-Token Prediction Speculative Decoding (`--spec-type draft-mtp --spec-draft-n-max 2`)
+   - Physical RAM Pinning (`--load-mode mmap+mlock` with `LimitMEMLOCK=infinity`)
+   - L3 Cache Micro-Batching (`-b 512 -ub 256`)
+   - Turbo 4-bit KV Cache (`-ctk q4_0 -ctv q4_0`) & Flash Attention (`--flash-attn on`)
+   - cgroups v2 caps: `MemoryHigh=28G`, `MemoryMax=32G`, `CPUQuota=550%`, `Nice=-5`
+9. **Self-Healing Sentinel Watchdog & Safe Disk Reclaimer**: Deploys `qwen-sentinel.service` to monitor health every 20s, auto-restart on deadlocks, drop page cache when RAM < 4 GB, and safely flush used swap back to disk when memory is freed.
+10. **Enterprise Firewall & Network Policy**: Automatically opens port 8000 across UFW, Firewalld, and iptables.
+11. **Readiness Verification Probe & Global `qwen-admin` Tool**: Polls readiness endpoint until healthy and installs `/usr/local/bin/qwen-admin`.
 
 ---
 
-## 2. Directory Structure
+## 🛠 Global Diagnostic CLI (`qwen-admin`)
 
-```
-/opt/qwen-server/
-├── bin/
-│   ├── llama-server
-│   ├── qwen-sentinel.sh
-│   └── lib*.so (shared libraries)
-├── models/
-│   └── Qwen3.8-27B-UD-Q4_K_XL.gguf
-└── logs/
-```
-
----
-
-## 3. Service Management
-
-| Action | Command |
+| Subcommand | Description |
 | :--- | :--- |
-| **Check Server Status** | `sudo systemctl status qwen-server` |
-| **Check CPU Governor** | `sudo systemctl status cpu-performance` |
-| **Check Sentinel Status** | `sudo systemctl status qwen-sentinel` |
-| **View Live Logs** | `sudo journalctl -u qwen-server -f` |
-| **Restart Server** | `sudo systemctl restart qwen-server` |
-| **Restart Sentinel** | `sudo systemctl restart qwen-sentinel` |
+| `sudo qwen-admin status` | Displays live service status, CPU frequencies, RAM, and swap metrics |
+| `sudo qwen-admin logs` | Follows live generation logs and millisecond profiler in real time |
+| `sudo qwen-admin sentinel-logs` | Follows memory watchdog events and auto-healing triggers |
+| `sudo qwen-admin restart` | Restarts inference server and sentinel watchdog cleanly |
+| `sudo qwen-admin test` | Runs an end-to-end streaming latency smoke test |
+| `sudo qwen-admin uninstall` | Cleanly purges services, configs, and binaries |
 
 ---
 
-## 4. Using the OpenAI-Compatible API
+## 📡 OpenAI-Compatible API Integration
 
-### 4.1 Streaming cURL Example (Instant Response)
+### Streaming cURL Example (Instant Response)
 
 ```bash
 curl -N http://localhost:8000/v1/chat/completions \
@@ -86,13 +68,13 @@ curl -N http://localhost:8000/v1/chat/completions \
   -d '{
     "model": "Qwen3.8-27B",
     "messages": [
-      {"role": "user", "content": "What is 2 + 2?"}
+      {"role": "user", "content": "Explain quantum computing briefly."}
     ],
     "stream": true
   }'
 ```
 
-### 4.2 Python (Official OpenAI SDK)
+### Python (Official OpenAI SDK)
 
 ```python
 from openai import OpenAI
@@ -102,7 +84,6 @@ client = OpenAI(
     api_key="not-needed"
 )
 
-# Streaming with live reasoning & content display
 stream = client.chat.completions.create(
     model="Qwen3.8-27B",
     messages=[{"role": "user", "content": "Explain quantum computing briefly."}],
