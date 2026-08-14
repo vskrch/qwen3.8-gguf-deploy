@@ -12,18 +12,18 @@ ExecStart=/opt/qwen-server/bin/llama-server \
     --mmproj /opt/qwen-server/models/mmproj-F16.gguf \
     --host 0.0.0.0 \
     --port 8000 \
-    -c 8192 \
+    -c 262144 \
     -t 6 \
     -tb 6 \
     --parallel 1 \
-    -ctk q8_0 \
-    -ctv q8_0 \
+    -ctk q4_0 \
+    -ctv q4_0 \
     --flash-attn on \
     --alias Qwen3.8-27B,qwen3.8-27b,qwen
 
 # Resource & Memory Boundaries (cgroups v2)
-MemoryHigh=28G
-MemoryMax=32G
+MemoryHigh=33G
+MemoryMax=36G
 CPUQuota=550%
 Nice=5
 CPUSchedulingPolicy=other

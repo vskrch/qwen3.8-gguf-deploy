@@ -1,6 +1,6 @@
 # Qwen3.8-27B-GGUF Deployment & OpenAI Compatible Serving
 
-Complete guide and 1-click installer for deploying, configuring, serving, and troubleshooting **Qwen3.8-27B-GGUF** ([`unsloth/Qwen3.8-27B-GGUF`](https://huggingface.co/unsloth/Qwen3.8-27B-GGUF)) with **Unsloth Dynamic V3.0 quantization**, **Turbo 8-bit KV Cache**, **cgroups v2 memory bounds**, and **automated self-healing watchdogs**.
+Complete guide and 1-click installer for deploying, configuring, serving, and troubleshooting **Qwen3.8-27B-GGUF** ([`unsloth/Qwen3.8-27B-GGUF`](https://huggingface.co/unsloth/Qwen3.8-27B-GGUF)) with **Full 262k Max Context**, **Unsloth Dynamic V3.0 quantization**, **Turbo 4-bit KV Cache**, **SSD Virtual Memory Headroom (82.5 GB)**, **cgroups v2 memory bounds**, and **automated self-healing & safe disk reclaimer watchdogs**.
 
 ---
 
@@ -24,17 +24,19 @@ sudo bash deploy.sh
 
 ## 1. Architecture & Features
 
+- **Context Window**: **262,144 Tokens (Full 262k Native Maximum)**
 - **Model Weights**: `Qwen3.8-27B-UD-Q4_K_XL.gguf` (~16.69 GB) + `mmproj-F16.gguf` (0.86 GB)
 - **Quantization**: Unsloth Dynamic V3.0 (Importance-matrix mixed precision)
 - **Turbo Optimizations**:
   - **Flash Attention**: `--flash-attn on` (In-cache tiled attention)
-  - **Turbo KV Cache**: `-ctk q8_0 -ctv q8_0` (Cuts KV cache RAM by 50%, boosts attention speed)
+  - **Turbo KV Cache**: `-ctk q4_0 -ctv q4_0` (Cuts KV cache RAM by 75%, allows 262k context within available memory)
   - **CPU AVX2 SIMD**: `-t 6 -tb 6 --parallel 1` (Direct multi-core vector processing)
+  - **Virtual Memory Pool**: 39 GB RAM + 32 GB SSD Swap (82.5 GB total virtual memory headroom)
 - **Safeguards & Self-Healing**:
-  - **cgroups v2 RAM Caps**: `MemoryHigh=28G`, `MemoryMax=32G` (Prevents system OOM)
+  - **cgroups v2 RAM Caps**: `MemoryHigh=33G`, `MemoryMax=36G` (Prevents system OOM)
   - **CPU Starvation Protection**: `CPUQuota=550%`, `Nice=5` (Guarantees CPU headroom for OS and other containers)
   - **OOM Score Adjustment**: `OOMScoreAdjust=500` (Protects other server workloads)
-  - **Active Watchdog (`qwen-sentinel.service`)**: Automated deadlock detection, memory pressure cache-drop, and auto-restart on crash/hang.
+  - **Active Watchdog & Safe Disk Reclaimer (`qwen-sentinel.service`)**: Automated deadlock detection, memory pressure cache-drop, and automated disk swap flushing when memory is freed.
 - **Base Endpoint**: `http://<SERVER_IP>:8000/v1`
 
 ---
@@ -126,17 +128,13 @@ for chunk in stream:
 
 ---
 
-## 5. Self-Healing & Safeguards Reference
+## 5. Self-Healing & Safe Disk Reclaimer
 
 ### Automatic Crash Recovery
 `qwen-server.service` uses `Restart=always` with `RestartSec=3`. If the process crashes or gets killed, systemd automatically restores the service in under 3 seconds.
 
-### Memory & CPU Bounds
-- If memory exceeds `28GB`, Linux begins throttling memory allocation gracefully.
-- If memory attempts to exceed `32GB`, cgroups caps the process without affecting the host or other Docker containers.
+### Memory & Disk Safeguards
+- `vm.swappiness=10` & `vm.vfs_cache_pressure=50`: Keeps active model weights in RAM.
+- **Disk Swap Overflow**: If long context prompts exceed RAM, the kernel transparently pages to the 32 GB SSD swap.
+- **Safe Disk Reclaim**: When memory returns to normal, the sentinel watchdog automatically flushes used swap back to disk (`swapoff -a && swapon -a`) to ensure no residual data sits on disk.
 - `CPUQuota=550%` guarantees CPU capacity is always reserved for the host OS and other services.
-
-### Active Sentinel Watchdog
-`qwen-sentinel.service` runs every 20 seconds:
-1. Pings the health endpoint. If unresponsive for 3 consecutive checks (60s), it triggers an automated restart.
-2. Monitors available system RAM. If free memory dips below `3.5GB`, it automatically flushes OS page caches.
