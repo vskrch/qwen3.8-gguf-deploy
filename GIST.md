@@ -1,10 +1,20 @@
-# Deploying Qwen3.8-27B-GGUF with Self-Healing, Memory Guards & Turbo Optimizations
+# ⚡ 1-Click Runbook: Deploy Qwen3.8-27B-GGUF with Self-Healing, Memory Guards & Turbo Optimizations
 
-A complete, standalone runbook for serving [`unsloth/Qwen3.8-27B-GGUF`](https://huggingface.co/unsloth/Qwen3.8-27B-GGUF) on Linux with **Unsloth Dynamic V3.0**, **8-bit Turbo KV Cache**, **cgroups v2 boundaries**, and **Sentinel Watchdog**.
+A standalone 1-click deployment guide for serving [`unsloth/Qwen3.8-27B-GGUF`](https://huggingface.co/unsloth/Qwen3.8-27B-GGUF) on Linux with **Unsloth Dynamic V3.0**, **8-bit Turbo KV Cache**, **cgroups v2 boundaries**, and **Sentinel Watchdog**.
 
 ---
 
-## ⚡ 1-Minute One-Liner Install
+## ⚡ 1-Click One-Liner Install
+
+Run directly on your Linux host:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/vskrch/qwen3.8-gguf-deploy/main/deploy.sh | sudo bash
+```
+
+---
+
+## 🛠 Standalone Script (Copy-Pasteable)
 
 ```bash
 sudo bash -c "$(cat << 'EOF'
@@ -19,7 +29,7 @@ vm.vfs_cache_pressure=50
 vm.dirty_ratio=10
 vm.dirty_background_ratio=5
 SYSCTL
-sysctl -p /etc/sysctl.d/99-qwen-tuning.conf || true
+sysctl -p /etc/sysctl.d/99-qwen-tuning.conf >/dev/null 2>&1 || true
 
 apt-get update -qq && apt-get install -y -qq aria2 curl tar
 
@@ -157,13 +167,18 @@ EOF
 
 ---
 
-## 🛠 Service Administration
+## 📡 OpenAI API Verification
 
 ```bash
-# Check server and watchdog health
-sudo systemctl status qwen-server
-sudo systemctl status qwen-sentinel
+# 1. Models
+curl http://localhost:8000/v1/models
 
-# View live watchdog logs
-sudo journalctl -u qwen-sentinel -f
+# 2. Chat Completion
+curl http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "Qwen3.8-27B",
+    "messages": [{"role": "user", "content": "What is 2+2?"}],
+    "max_tokens": 50
+  }'
 ```

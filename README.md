@@ -1,21 +1,39 @@
 # Qwen3.8-27B-GGUF Deployment & OpenAI Compatible Serving
 
-Complete guide and reference for deploying, configuring, serving, and troubleshooting **Qwen3.8-27B-GGUF** ([`unsloth/Qwen3.8-27B-GGUF`](https://huggingface.co/unsloth/Qwen3.8-27B-GGUF)) with **Unsloth Dynamic V3.0 quantization**, **Turbo 8-bit KV Cache**, **cgroups v2 memory bounds**, and **automated self-healing watchdogs**.
+Complete guide and 1-click installer for deploying, configuring, serving, and troubleshooting **Qwen3.8-27B-GGUF** ([`unsloth/Qwen3.8-27B-GGUF`](https://huggingface.co/unsloth/Qwen3.8-27B-GGUF)) with **Unsloth Dynamic V3.0 quantization**, **Turbo 8-bit KV Cache**, **cgroups v2 memory bounds**, and **automated self-healing watchdogs**.
 
 ---
 
-## 1. Overview & Architecture
+## ⚡ 1-Click Installation
 
-- **Model**: `Qwen3.8-27B-UD-Q4_K_XL.gguf` (~16.69 GB) + `mmproj-F16.gguf` (0.86 GB)
-- **Quantization**: Unsloth Dynamic V3.0 (Per-tensor importance-weighted quantization)
+Run this single command on your Linux server:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/vskrch/qwen3.8-gguf-deploy/main/deploy.sh | sudo bash
+```
+
+Or clone and run locally:
+
+```bash
+git clone https://github.com/vskrch/qwen3.8-gguf-deploy.git
+cd qwen3.8-gguf-deploy
+sudo bash deploy.sh
+```
+
+---
+
+## 1. Architecture & Features
+
+- **Model Weights**: `Qwen3.8-27B-UD-Q4_K_XL.gguf` (~16.69 GB) + `mmproj-F16.gguf` (0.86 GB)
+- **Quantization**: Unsloth Dynamic V3.0 (Importance-matrix mixed precision)
 - **Turbo Optimizations**:
-  - **Flash Attention**: `--flash-attn on`
-  - **Turbo KV Cache**: `-ctk q8_0 -ctv q8_0` (Halves KV cache RAM, accelerates attention)
-  - **CPU AVX2 SIMD**: `-t 6 -tb 6 --parallel 1`
+  - **Flash Attention**: `--flash-attn on` (In-cache tiled attention)
+  - **Turbo KV Cache**: `-ctk q8_0 -ctv q8_0` (Cuts KV cache RAM by 50%, boosts attention speed)
+  - **CPU AVX2 SIMD**: `-t 6 -tb 6 --parallel 1` (Direct multi-core vector processing)
 - **Safeguards & Self-Healing**:
   - **cgroups v2 RAM Caps**: `MemoryHigh=28G`, `MemoryMax=32G` (Prevents system OOM)
-  - **CPU Starvation Protection**: `CPUQuota=550%`, `Nice=5` (Reserves CPU for host/Potato server)
-  - **OOM Score Adjustment**: `OOMScoreAdjust=500` (Protects Potato Docker container)
+  - **CPU Starvation Protection**: `CPUQuota=550%`, `Nice=5` (Guarantees CPU headroom for OS and other containers)
+  - **OOM Score Adjustment**: `OOMScoreAdjust=500` (Protects other server workloads)
   - **Active Watchdog (`qwen-sentinel.service`)**: Automated deadlock detection, memory pressure cache-drop, and auto-restart on crash/hang.
 - **Base Endpoint**: `http://<SERVER_IP>:8000/v1`
 
@@ -37,17 +55,7 @@ Complete guide and reference for deploying, configuring, serving, and troublesho
 
 ---
 
-## 3. Quick Start / Installation
-
-### Automatic Deployment
-Run the included `deploy.sh` as root:
-```bash
-sudo bash deploy.sh
-```
-
----
-
-## 4. Service Management
+## 3. Service Management
 
 | Action | Command |
 | :--- | :--- |
@@ -59,12 +67,12 @@ sudo bash deploy.sh
 
 ---
 
-## 5. Using the OpenAI-Compatible API
+## 4. Using the OpenAI-Compatible API
 
-### 5.1 cURL Example
+### 4.1 cURL Example
 
 ```bash
-curl http://10.0.0.73:8000/v1/chat/completions \
+curl http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
     "model": "Qwen3.8-27B",
@@ -77,26 +85,25 @@ curl http://10.0.0.73:8000/v1/chat/completions \
   }'
 ```
 
-### 5.2 Python (Official OpenAI SDK)
+### 4.2 Python (Official OpenAI SDK)
 
 ```python
 from openai import OpenAI
 
 client = OpenAI(
-    base_url="http://10.0.0.73:8000/v1",
+    base_url="http://localhost:8000/v1",
     api_key="not-needed"
 )
 
-# Standard call with reasoning/thinking support
+# Standard call with reasoning/thinking extraction
 response = client.chat.completions.create(
     model="Qwen3.8-27B",
     messages=[
-        {"role": "user", "content": "Explain CPU vectorization briefly."}
+        {"role": "user", "content": "Explain CPU vectorization in 2 sentences."}
     ],
     max_tokens=150
 )
 
-# Qwen3.8 outputs both reasoning (thinking) and final answer
 msg = response.choices[0].message
 if hasattr(msg, "reasoning_content") and msg.reasoning_content:
     print(f"💭 Thinking:\n{msg.reasoning_content}\n")
@@ -105,7 +112,7 @@ print(f"🤖 Answer:\n{msg.content}")
 # Streaming example
 stream = client.chat.completions.create(
     model="Qwen3.8-27B",
-    messages=[{"role": "user", "content": "Write a short haiku."}],
+    messages=[{"role": "user", "content": "Write a short poem about space."}],
     stream=True
 )
 
@@ -119,17 +126,17 @@ for chunk in stream:
 
 ---
 
-## 6. Self-Healing & Safeguards Reference
+## 5. Self-Healing & Safeguards Reference
 
 ### Automatic Crash Recovery
 `qwen-server.service` uses `Restart=always` with `RestartSec=3`. If the process crashes or gets killed, systemd automatically restores the service in under 3 seconds.
 
 ### Memory & CPU Bounds
-- If memory exceeds `28GB`, Linux begins throttling memory allocation.
-- If memory attempts to exceed `32GB`, cgroups caps the process without affecting the host or `/opt/potato`.
-- `CPUQuota=550%` guarantees at least 50% of one core is always reserved for the host OS and other services.
+- If memory exceeds `28GB`, Linux begins throttling memory allocation gracefully.
+- If memory attempts to exceed `32GB`, cgroups caps the process without affecting the host or other Docker containers.
+- `CPUQuota=550%` guarantees CPU capacity is always reserved for the host OS and other services.
 
 ### Active Sentinel Watchdog
 `qwen-sentinel.service` runs every 20 seconds:
-1. Pings the health endpoint. If unresponsive for 3 consecutive checks (60s), it issues a restart.
+1. Pings the health endpoint. If unresponsive for 3 consecutive checks (60s), it triggers an automated restart.
 2. Monitors available system RAM. If free memory dips below `3.5GB`, it automatically flushes OS page caches.

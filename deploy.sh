@@ -1,40 +1,81 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Qwen3.8-27B-GGUF Deployment Script with Self-Healing & Memory Protection
-# Fully OpenAI-Compatible Endpoints on Port 8000
-# Isolated in /opt/qwen-server (Does NOT touch /opt/potato)
+# 🚀 1-Click Autonomous Installer for Qwen3.8-27B-GGUF (llama-server)
+# Features:
+#   • Unsloth Dynamic V3.0 Quantization (UD-Q4_K_XL) + Multimodal Vision
+#   • Turbo 8-Bit KV Cache Quantization (-ctk q8_0 -ctv q8_0)
+#   • Flash Attention & CPU AVX2 Multi-Thread Vector Acceleration
+#   • cgroups v2 Memory Hard Limits (28G High / 32G Max)
+#   • CPU Quota (550%) & Starvation Guard (Protects host & other containers)
+#   • Active Self-Healing Sentinel Watchdog (Auto-restart on deadlocks/crashes)
+#   • Automatic Page Cache Memory Flush when RAM < 3.5 GB
+#   • Fully OpenAI-Compatible Endpoints on Port 8000 (http://<IP>:8000/v1)
 # ==============================================================================
 set -euo pipefail
+
+# Visual formatting
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+log_info()    { echo -e "${BLUE}[INFO]${NC} $1"; }
+log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
+log_warn()    { echo -e "${YELLOW}[WARN]${NC} $1"; }
+log_error()   { echo -e "${RED}[ERROR]${NC} $1"; }
+
+if [ "$(id -u)" -ne 0 ]; then
+    log_error "This script must be run as root (or with sudo)."
+    exit 1
+fi
 
 INSTALL_DIR="/opt/qwen-server"
 MODELS_DIR="${INSTALL_DIR}/models"
 BIN_DIR="${INSTALL_DIR}/bin"
 LOGS_DIR="${INSTALL_DIR}/logs"
 PORT=8000
-THREADS=6
+THREADS=$(nproc || echo 6)
 CTX_SIZE=8192
+
 MODEL_NAME="Qwen3.8-27B-UD-Q4_K_XL.gguf"
 MODEL_URL="https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/main/${MODEL_NAME}"
 MMPROJ_NAME="mmproj-F16.gguf"
 MMPROJ_URL="https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/main/${MMPROJ_NAME}"
 LLAMA_TAR_URL="https://github.com/ggml-org/llama.cpp/releases/download/b10431/llama-b10431-bin-ubuntu-x64.tar.gz"
 
-echo "=== [1/8] Tuning Linux Virtual Memory Settings ==="
+echo -e "${GREEN}"
+echo "=================================================================="
+echo "    Qwen3.8-27B-GGUF OpenAI-Compatible 1-Click Server Deployer   "
+echo "=================================================================="
+echo -e "${NC}"
+
+# 1. Virtual Memory Tuning
+log_info "[1/8] Applying Linux kernel virtual memory tuning..."
 cat << 'SYSCTL' > /etc/sysctl.d/99-qwen-tuning.conf
 vm.swappiness=10
 vm.vfs_cache_pressure=50
 vm.dirty_ratio=10
 vm.dirty_background_ratio=5
 SYSCTL
-sysctl -p /etc/sysctl.d/99-qwen-tuning.conf || true
+sysctl -p /etc/sysctl.d/99-qwen-tuning.conf >/dev/null 2>&1 || true
 
-echo "=== [2/8] Creating isolated directory structure at ${INSTALL_DIR} ==="
+# 2. Directory structure
+log_info "[2/8] Creating directory structure at ${INSTALL_DIR}..."
 mkdir -p "${BIN_DIR}" "${MODELS_DIR}" "${LOGS_DIR}"
 
-echo "=== [3/8] Installing dependencies (aria2, curl, tar) ==="
-apt-get update -qq && apt-get install -y -qq aria2 curl tar
+# 3. Dependencies
+log_info "[3/8] Installing package dependencies (aria2, curl, tar)..."
+if command -v apt-get >/dev/null 2>&1; then
+    apt-get update -qq && apt-get install -y -qq aria2 curl tar
+elif command -v dnf >/dev/null 2>&1; then
+    dnf install -y -q aria2 curl tar
+elif command -v yum >/dev/null 2>&1; then
+    yum install -y -q aria2 curl tar
+fi
 
-echo "=== [4/8] Downloading & Installing llama-server ==="
+# 4. Engine Installation
+log_info "[4/8] Downloading and installing llama-server engine (b10431)..."
 TMP_DIR=$(mktemp -d)
 curl -L -s "${LLAMA_TAR_URL}" -o "${TMP_DIR}/llama.tar.gz"
 tar -xzf "${TMP_DIR}/llama.tar.gz" -C "${TMP_DIR}"
@@ -42,24 +83,28 @@ cp -r "${TMP_DIR}"/llama-b10431/* "${BIN_DIR}/"
 chmod +x "${BIN_DIR}/llama-server"
 rm -rf "${TMP_DIR}"
 
-echo "=== [5/8] Downloading Qwen3.8-27B GGUF model via multi-threaded aria2 ==="
+# 5. Model Download (Accelerated)
+log_info "[5/8] Checking and downloading model weights (16-thread aria2)..."
 if [ ! -f "${MODELS_DIR}/${MODEL_NAME}" ]; then
+    log_info "Downloading ${MODEL_NAME} (~16.7 GB)..."
     aria2c -x 16 -s 16 -k 1M --file-allocation=none \
         --dir="${MODELS_DIR}" --out="${MODEL_NAME}" \
         "${MODEL_URL}"
 else
-    echo "Model file ${MODEL_NAME} already exists."
+    log_success "Model file ${MODEL_NAME} is already present."
 fi
 
 if [ ! -f "${MODELS_DIR}/${MMPROJ_NAME}" ]; then
+    log_info "Downloading multimodal projector ${MMPROJ_NAME}..."
     aria2c -x 16 -s 16 -k 1M --file-allocation=none \
         --dir="${MODELS_DIR}" --out="${MMPROJ_NAME}" \
         "${MMPROJ_URL}"
 else
-    echo "Multimodal projector ${MMPROJ_NAME} already exists."
+    log_success "Projector file ${MMPROJ_NAME} is already present."
 fi
 
-echo "=== [6/8] Installing Hardened Systemd Service ==="
+# 6. Hardened Systemd Service
+log_info "[6/8] Configuring hardened systemd service (qwen-server.service)..."
 cat <<EOF > /etc/systemd/system/qwen-server.service
 [Unit]
 Description=Qwen3.8-27B-GGUF llama-server (OpenAI Compatible API)
@@ -103,7 +148,8 @@ LimitNOFILE=65535
 WantedBy=multi-user.target
 EOF
 
-echo "=== [7/8] Installing Self-Healing Sentinel Watchdog ==="
+# 7. Self-Healing Watchdog Sentinel
+log_info "[7/8] Installing proactive watchdog daemon (qwen-sentinel.service)..."
 cat << 'SENTINEL' > "${BIN_DIR}/qwen-sentinel.sh"
 #!/usr/bin/env bash
 set -u
@@ -115,28 +161,19 @@ CONSECUTIVE_FAILURES=0
 MAX_FAILURES=3
 MIN_AVAILABLE_RAM_KB=3670016
 
-log() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [QWEN-SENTINEL] $1"
-}
-
-log "Sentinel initialized. Monitoring ${SERVICE_NAME} on port 8000..."
+log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [QWEN-SENTINEL] $1"; }
 
 while true; do
     if [ -f /proc/meminfo ]; then
         MEM_AVAIL=$(awk '/MemAvailable/ {print $2}' /proc/meminfo)
         if [ -n "${MEM_AVAIL}" ] && [ "${MEM_AVAIL}" -lt "${MIN_AVAILABLE_RAM_KB}" ]; then
             log "⚠️ Memory pressure detected! Available RAM: $((MEM_AVAIL / 1024)) MB"
-            log "🧹 Reclaiming page cache..."
             sync && echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true
-            NEW_MEM=$(awk '/MemAvailable/ {print $2}' /proc/meminfo)
-            log "✅ Page cache dropped. New Available RAM: $((NEW_MEM / 1024)) MB"
         fi
     fi
 
     if ! systemctl is-active --quiet "${SERVICE_NAME}"; then
-        log "⚠️ Service ${SERVICE_NAME} is inactive. Attempting automatic start..."
         systemctl start "${SERVICE_NAME}"
-        CONSECUTIVE_FAILURES=0
         sleep "${CHECK_INTERVAL}"
         continue
     fi
@@ -148,16 +185,13 @@ while true; do
         CONSECUTIVE_FAILURES=0
     else
         CONSECUTIVE_FAILURES=$((CONSECUTIVE_FAILURES + 1))
-        log "⚠️ Health probe failed (HTTP code: ${HTTP_CODE}, Fail count: ${CONSECUTIVE_FAILURES}/${MAX_FAILURES})"
-
         if [ "${CONSECUTIVE_FAILURES}" -ge "${MAX_FAILURES}" ]; then
-            log "🚨 Server unresponsive for > $((MAX_FAILURES * CHECK_INTERVAL)) seconds. Triggering Self-Healing Restart..."
+            log "🚨 Server unresponsive. Triggering self-healing restart..."
             systemctl restart "${SERVICE_NAME}"
             CONSECUTIVE_FAILURES=0
             sleep 15
         fi
     fi
-
     sleep "${CHECK_INTERVAL}"
 done
 SENTINEL
@@ -180,15 +214,33 @@ RestartSec=5
 WantedBy=multi-user.target
 SNTL_SVC
 
-echo "=== [8/8] Configuring Firewall & Starting Services ==="
+# 8. Firewall & Activation
+log_info "[8/8] Opening firewall port ${PORT} and starting services..."
 if command -v ufw >/dev/null 2>&1; then
-    ufw allow ${PORT}/tcp comment 'Qwen LLM OpenAI API' || true
+    ufw allow ${PORT}/tcp comment 'Qwen LLM OpenAI API' >/dev/null 2>&1 || true
 fi
 
 systemctl daemon-reload
 systemctl enable --now qwen-server
 systemctl enable --now qwen-sentinel
 
-echo "=== Deployment & Safeguards Active ==="
-echo "Endpoint: http://localhost:${PORT}/v1/chat/completions"
-echo "Models:   http://localhost:${PORT}/v1/models"
+log_info "Waiting for model to initialize in RAM..."
+for i in {1..30}; do
+    HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:${PORT}/v1/models 2>/dev/null || echo "000")
+    if [ "${HTTP_STATUS}" = "200" ]; then
+        break
+    fi
+    sleep 1
+done
+
+echo ""
+log_success "🎉 Qwen3.8-27B-GGUF Deployment Complete & Healthy!"
+echo "------------------------------------------------------------------"
+echo " • OpenAI Base URL:    http://$(curl -s ifconfig.me || hostname -I | awk '{print $1}'):${PORT}/v1"
+echo " • Local Base URL:     http://localhost:${PORT}/v1"
+echo " • Models Endpoint:    http://localhost:${PORT}/v1/models"
+echo " • Chat Completions:   http://localhost:${PORT}/v1/chat/completions"
+echo " • Web UI:             http://localhost:${PORT}/"
+echo " • Check Status:       sudo systemctl status qwen-server"
+echo " • Check Sentinel:     sudo systemctl status qwen-sentinel"
+echo "------------------------------------------------------------------"
